@@ -1,0 +1,146 @@
+---
+title: "Mice project report"
+author: "Pavel Vychyk"
+date: "10/04/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#### Check for required packages
+```{r perform packages installation, message=FALSE, results='hide', warn.conflicts=F}
+pckages <- c('xlsx', 'ggplot2', 'ggpubr', 'car', 'FSA', 'ggfortify', 'knitr')
+for(package in pckages) {
+  if(!require(package, character.only = T)) {
+    install.packages(package, dependencies = T)
+    library(package)
+  }
+}
+```
+#### Load required libraries 
+```{r message=FALSE}
+library(xlsx)
+library(ggplot2)
+library(ggpubr)
+library(car)
+library(FSA)
+library(ggfortify)
+library(knitr)
+```
+
+#### provide the path to the data file and read
+```{r}
+data_mice <- read.xlsx("../data_folder/Data_Cortex_Nuclear.xls", "Hoja1")
+```
+
+#### 1. EDA
+Lets look on the data. We could see, that column MouseID has repeats for the
+same object
+```{r}
+head(data_mice)
+```
+Get the number of mice in the data set
+```{r}
+length(unique(sapply(strsplit(data_mice$MouseID, "_"), "[", 1)))
+```
+Look on the presented groups
+```{r} 
+unique(data_mice$class)
+unique(data_mice$Treatment)
+unique(data_mice$Genotype)
+unique(data_mice$Behavior)
+```
+Check the groups balance
+``` {r}
+table(data_mice$class)
+table(data_mice$Treatment)
+table(data_mice$Genotype)
+table(data_mice$Behavior)
+```
+Count NA in samples
+```{r}
+sapply(data_mice, function(y) sum(is.na(data_mice)))
+nrow(data_mice[rowSums(is.na(data_mice))>0, ])
+```
+
+#### 2. Is there any difference in BDNF_N expression levels regarding to the class
+Let's drop incomplete cases
+```{r} 
+complete_data <- data_mice[complete.cases(data_mice),]
+```
+And look on the assumptions for comparison tests,
+firstly check normality distribution using graphical analysis
+and Shapiro–Wilk test
+QQ-plot:
+```{r}
+ggqqplot(complete_data$BDNF_N)
+```
+Shapiro-Wilk test result:
+```{r}
+shtest <- shapiro.test(complete_data$BDNF_N)
+shapiro.test(complete_data$BDNF_N)
+```
+Check homogeneity of variances assumption within classes
+```{r}
+complete_data$class <- as.factor(complete_data$class)
+lvtest <- leveneTest(BDNF_N ~ class, data=complete_data)
+leveneTest(BDNF_N ~ class, data=complete_data)
+``` 
+Despite the QQ-plot shows near normal distribution,
+Shapiro-Wilk test <b>rejects data normality</b> hypothesis <b>(p-value = `r shtest$p.value`)</b>
+Levene's test <b>rejects variance homogeneity</b> <b>(p-value = `r lvtest$p.value`)</b>.
+Due to lack of default assumptions in our data, start with non-parametric Kruskal-Wallis test for difference
+between classes.
+```{r}
+kwtest <- kruskal.test(BDNF_N ~ class, data=complete_data)
+kruskal.test(BDNF_N ~ class, data=complete_data)
+``` 
+Kruskal-Wallis test <b>rejects the null hypothesis</b> for equality of medians within groups 
+<b>(p-value = `r kwtest$p.value`)</b>. We should perform post-hoc analysis to
+find which groups have significant difference in medians. 
+For post-hoc we use Dunn's test:
+```{r}
+dTest <- dunnTest(BDNF_N ~ class, data=complete_data, method = "bh")
+dResult <- dTest$res
+dResult[dResult$P.adj < 0.05, ]
+```
+Dunn test shows statistical significant difference in medians for classes at p-value level < 0.05,
+most significant difference was for classes below:
+c-SC-m: control mice, not stimulated to learn, injected with memantine
+t-SC-s: trisomy mice, not stimulated to learn, injected with saline
+Let's visualize BDNF_N expressions difference for classes with boxplot graphs:
+```{r}
+ggplot(complete_data, aes(x = class, y = BDNF_N, col = class)) + geom_boxplot()
+```
+#### 3. Try to predict BDNF_N expression based on other proteins expression levels with linear model
+Build linear model using as predictor variables all columns, except categorical data
+```{r}
+f_model <- lm(BDNF_N ~ . - MouseID - Genotype - Treatment - Behavior - class, data = complete_data)
+summary(f_model)
+```
+R-square seems significant, but is our model really good?
+Residuals vs Fitted shows good support for the linear assumptions
+```{r}
+plot(f_model, 1)
+```
+Normal QQ shows the presence of several outliers, but in general model's residual are normally distributed
+```{r}
+plot(f_model, 2)
+```
+Spread location graph shows indication of heteroscedasticity, due to unequal 
+```{r}
+plot(f_model, 3)
+```
+Cook's distance also plots some outliers
+```{r}
+plot(f_model, 4)
+```
+Multicollinearity within the data could
+be checked with correlation matrix, we could
+see that many pairs demonstrate high level of correlation (> 0.6) 
+```{r}
+cor(complete_data[,2:78])
+```
+We could conclude, that build linear model lacks
+basic support, and could not be used for prediction.
